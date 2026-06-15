@@ -1727,7 +1727,7 @@ micro_wake_word:
       id: hey_jarvis
     - model: hey_mycroft
       id: hey_mycroft
-    - model: /config/esphome/models/hey_auri/hey_auri.json
+    - model: https://raw.githubusercontent.com/williamshen26/AuriESPAssets/refs/heads/mainline/models/hey_auri/hey_auri.json
       id: hey_auri
       probability_cutoff: 0.95
       sliding_window_size: 5
