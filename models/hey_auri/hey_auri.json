@@ -1,0 +1,16 @@
+{
+  "type": "micro",
+  "wake_word": "hey auri",
+  "author": "Auri",
+  "website": "https://hey-auri.com",
+  "model": "hey_auri.tflite",
+  "trained_languages": ["en"],
+  "version": 2,
+  "micro": {
+    "probability_cutoff": 0.98,
+    "sliding_window_size": 5,
+    "feature_step_size": 10,
+    "tensor_arena_size": 35000,
+    "minimum_esphome_version": "2024.7"
+  }
+}
