@@ -1729,7 +1729,7 @@ micro_wake_word:
       id: hey_mycroft
     - model: https://raw.githubusercontent.com/williamshen26/AuriESPAssets/refs/heads/mainline/models/hey_auri/hey_auri.json
       id: hey_auri
-      probability_cutoff: 0.95
+      probability_cutoff: 0.98
       sliding_window_size: 5
     - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
       id: stop
