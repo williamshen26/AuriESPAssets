@@ -1776,7 +1776,17 @@ micro_wake_word:
                                       id: play_sound
                                       priority: true
                                       sound_file: "wake_word_triggered_sound"
-                                  - delay: 400ms
+                                  - wait_until:
+                                      condition:
+                                        media_player.is_announcing:
+                                          id: external_media_player
+                                      timeout: 1s
+                                  - wait_until:
+                                      condition:
+                                        not:
+                                          media_player.is_announcing:
+                                            id: external_media_player
+                                      timeout: 2s
                             - voice_assistant.start:
                                 wake_word: !lambda return wake_word;
 
