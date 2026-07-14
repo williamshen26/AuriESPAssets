@@ -234,8 +234,8 @@ switch:
   # Internal switch to track when a timer is ringing on the device.
   - platform: template
     id: timer_ringing
+    name: Timer Ringing
     optimistic: true
-    internal: true
     restore_mode: ALWAYS_OFF
     on_turn_off:
       # Disable stop wake word
@@ -1776,17 +1776,7 @@ micro_wake_word:
                                       id: play_sound
                                       priority: true
                                       sound_file: "wake_word_triggered_sound"
-                                  - wait_until:
-                                      condition:
-                                        media_player.is_announcing:
-                                          id: external_media_player
-                                      timeout: 1s
-                                  - wait_until:
-                                      condition:
-                                        not:
-                                          media_player.is_announcing:
-                                            id: external_media_player
-                                      timeout: 2s
+                                  - delay: 350ms
                             - voice_assistant.start:
                                 wake_word: !lambda return wake_word;
 
