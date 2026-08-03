@@ -1520,6 +1520,22 @@ script:
           then:
             - logger.log: "Starting follow-up voice assistant turn"
             - voice_assistant.start:
+            - delay: 500ms
+            - if:
+                condition:
+                  not:
+                    voice_assistant.is_running:
+                then:
+                  - logger.log: "Voice assistant stopped within 500ms, retrying listen"
+                  - voice_assistant.start:
+            - delay: 500ms
+            - if:
+                condition:
+                  not:
+                    voice_assistant.is_running:
+                then:
+                  - logger.log: "Voice assistant stopped within 1s, retrying listen"
+                  - voice_assistant.start:
 
 i2s_audio:
   - id: i2s_output
@@ -1734,7 +1750,7 @@ micro_wake_word:
     - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
       id: stop
       internal: true
-  vad:
+  # vad:
   on_wake_word_detected:
     # If the wake word is detected when the device is muted (Possible with the software mute switch): Do nothing
     - if:
@@ -1779,6 +1795,22 @@ micro_wake_word:
                                   - delay: 350ms
                             - voice_assistant.start:
                                 wake_word: !lambda return wake_word;
+                            - delay: 500ms
+                            - if:
+                                condition:
+                                  not:
+                                    voice_assistant.is_running:
+                                then:
+                                  - logger.log: "Voice assistant stopped within 500ms, retrying listen"
+                                  - voice_assistant.start:
+                            - delay: 500ms
+                            - if:
+                                condition:
+                                  not:
+                                    voice_assistant.is_running:
+                                then:
+                                  - logger.log: "Voice assistant stopped within 1s, retrying listen"
+                                  - voice_assistant.start:
 
 select:
   - platform: template
