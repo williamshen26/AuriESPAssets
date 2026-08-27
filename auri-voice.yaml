@@ -191,6 +191,19 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # Tracks starts that are eligible for a one-time retry when STT immediately returns no text.
+  - id: va_started_at_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: va_early_retry_armed
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: va_early_retry_used
+    type: bool
+    restore_value: no
+    initial_value: 'false'
 
 switch:
   # This is the master mute switch. It is exposed to Home Assistant. The user can only turn it on and off if the hardware switch is off. (The hardware switch overrides the software one)
@@ -1504,6 +1517,35 @@ script:
                 then:
                   - micro_wake_word.disable_model: stop
 
+  # Restarts listening once when stt-no-text-recognized is returned within
+  # one second of an eligible voice_assistant.start call.
+  - id: retry_va_after_early_no_text
+    mode: restart
+    then:
+      # on_error is raised before the failed pipeline has completely stopped.
+      - delay: 100ms
+      - wait_until:
+          condition:
+            not:
+              voice_assistant.is_running:
+          timeout: 750ms
+      - if:
+          condition:
+            and:
+              - switch.is_off: master_mute_switch
+              - not:
+                  voice_assistant.is_running
+          then:
+            - logger.log:
+                level: WARN
+                format: "Restarting voice assistant after early stt-no-text-recognized"
+            # This is a listening retry, not a second wake-word request.
+            - voice_assistant.start:
+          else:
+            - logger.log:
+                level: WARN
+                format: "Early STT retry cancelled because the assistant did not stop or the device is muted"
+
   - id: start_follow_up_once
     mode: restart
     then:
@@ -1519,23 +1561,11 @@ script:
                     id: external_media_player
           then:
             - logger.log: "Starting follow-up voice assistant turn"
+            - lambda: |-
+                id(va_started_at_ms) = millis();
+                id(va_early_retry_armed) = true;
+                id(va_early_retry_used) = false;
             - voice_assistant.start:
-            - delay: 500ms
-            - if:
-                condition:
-                  not:
-                    voice_assistant.is_running:
-                then:
-                  - logger.log: "Voice assistant stopped within 500ms, retrying listen"
-                  - voice_assistant.start:
-            - delay: 500ms
-            - if:
-                condition:
-                  not:
-                    voice_assistant.is_running:
-                then:
-                  - logger.log: "Voice assistant stopped within 1s, retrying listen"
-                  - voice_assistant.start:
 
 i2s_audio:
   - id: i2s_output
@@ -1750,7 +1780,7 @@ micro_wake_word:
     - model: https://github.com/kahrendt/microWakeWord/releases/download/stop/stop.json
       id: stop
       internal: true
-  # vad:
+  vad:
   on_wake_word_detected:
     # If the wake word is detected when the device is muted (Possible with the software mute switch): Do nothing
     - if:
@@ -1793,24 +1823,12 @@ micro_wake_word:
                                       priority: true
                                       sound_file: "wake_word_triggered_sound"
                                   - delay: 350ms
+                            - lambda: |-
+                                id(va_started_at_ms) = millis();
+                                id(va_early_retry_armed) = true;
+                                id(va_early_retry_used) = false;
                             - voice_assistant.start:
                                 wake_word: !lambda return wake_word;
-                            - delay: 500ms
-                            - if:
-                                condition:
-                                  not:
-                                    voice_assistant.is_running:
-                                then:
-                                  - logger.log: "Voice assistant stopped within 500ms, retrying listen"
-                                  - voice_assistant.start:
-                            - delay: 500ms
-                            - if:
-                                condition:
-                                  not:
-                                    voice_assistant.is_running:
-                                then:
-                                  - logger.log: "Voice assistant stopped within 1s, retrying listen"
-                                  - voice_assistant.start:
 
 select:
   - platform: template
@@ -1831,14 +1849,17 @@ select:
       # These cutoffs apply only to the specific models included in the firmware: okay_nabu@20241226.3, hey_jarvis@v2, hey_mycroft@v2
       lambda: |-
         if (x == "Slightly sensitive") {
+          id(hey_auri).set_probability_cutoff(253);
           id(okay_nabu).set_probability_cutoff(217);    // 0.85 -> 0.000 FAPH on DipCo (Manifest's default)
           id(hey_jarvis).set_probability_cutoff(247);   // 0.97 -> 0.563 FAPH on DipCo (Manifest's default)
           id(hey_mycroft).set_probability_cutoff(253);  // 0.99 -> 0.567 FAPH on DipCo
         } else if (x == "Moderately sensitive") {
+          id(hey_auri).set_probability_cutoff(242);
           id(okay_nabu).set_probability_cutoff(176);    // 0.69 -> 0.376 FAPH on DipCo
           id(hey_jarvis).set_probability_cutoff(235);   // 0.92 -> 0.939 FAPH on DipCo
           id(hey_mycroft).set_probability_cutoff(242);  // 0.95 -> 1.502 FAPH on DipCo (Manifest's default)
         } else if (x == "Very sensitive") {
+          id(hey_auri).set_probability_cutoff(237);
           id(okay_nabu).set_probability_cutoff(143);    // 0.56 -> 0.751 FAPH on DipCo
           id(hey_jarvis).set_probability_cutoff(212);   // 0.83 -> 1.502 FAPH on DipCo
           id(hey_mycroft).set_probability_cutoff(237);  // 0.93 -> 1.878 FAPH on DipCo
@@ -1854,8 +1875,8 @@ voice_assistant:
   media_player: external_media_player
   micro_wake_word: mww
   use_wake_word: false
-  noise_suppression_level: 0
-  auto_gain: 0 dbfs
+  noise_suppression_level: 2
+  auto_gain: 31dbfs
   volume_multiplier: 1
   on_client_connected:
     - lambda: id(init_in_progress) = false;
@@ -1867,6 +1888,26 @@ voice_assistant:
     - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
     - script.execute: control_leds
   on_error:
+    # Retry exactly once only when STT returns no text within one second of
+    # an eligible start (wake-word start or start_follow_up_once).
+    - if:
+        condition:
+          lambda: |-
+            const uint32_t elapsed =
+                static_cast<uint32_t>(millis() - id(va_started_at_ms));
+            return code == "stt-no-text-recognized"
+                && id(va_early_retry_armed)
+                && !id(va_early_retry_used)
+                && elapsed <= 1000;
+        then:
+          - lambda: |-
+              id(va_early_retry_used) = true;
+              id(va_early_retry_armed) = false;
+          - logger.log:
+              level: WARN
+              format: "stt-no-text-recognized occurred within 1s; scheduling one listening retry"
+          - script.execute: retry_va_after_early_no_text
+
     # Only set the error phase if the error code is different than duplicate_wake_up_detected or stt-no-text-recognized
     # These two are ignored for a better user experience
     - if:
