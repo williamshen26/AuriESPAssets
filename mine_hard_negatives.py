@@ -490,6 +490,15 @@ def main():
     )
 
     parser.add_argument(
+        "--count",
+        action="store_true",
+        help=(
+            "Only count matches instead of saving clips. "
+            "--output is not used in this mode."
+        ),
+    )
+
+    parser.add_argument(
         "--threshold",
         type=float,
         default=0.98,
@@ -556,12 +565,15 @@ def main():
         )
 
     input_dir = Path(args.input)
-    output_dir = Path(args.output)
+    output_dir = None
 
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    if not args.count:
+        output_dir = Path(args.output)
+
+        output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
     audio_files = sorted(
         path
@@ -615,6 +627,7 @@ def main():
     )
 
     rows = []
+    match_count = 0
 
     print(
         f"Scanning {len(audio_files)} audio files "
@@ -735,15 +748,7 @@ def main():
                 )
 
                 for hit in hits:
-                    clip = extract_clip_pcm16(
-                        pcm16,
-                        hit["time"],
-                        TARGET_SAMPLE_RATE,
-                        args.pre,
-                        args.post,
-                    )
-
-                    file_candidates.append({
+                    candidate = {
                         "absolute_time":
                             chunk_start + hit["time"],
 
@@ -752,10 +757,18 @@ def main():
 
                         "peak":
                             hit["peak"],
+                    }
 
-                        "clip":
-                            clip,
-                    })
+                    if not args.count:
+                        candidate["clip"] = extract_clip_pcm16(
+                            pcm16,
+                            hit["time"],
+                            TARGET_SAMPLE_RATE,
+                            args.pre,
+                            args.post,
+                        )
+
+                    file_candidates.append(candidate)
 
         except RuntimeError as error:
             print(
@@ -773,44 +786,47 @@ def main():
         )
 
         for hit in file_candidates:
-            candidate_id = str(
-                uuid.uuid4()
-            )
+            match_count += 1
 
-            output_file = (
-                output_dir
-                / f"{candidate_id}.wav"
-            )
+            if not args.count:
+                candidate_id = str(
+                    uuid.uuid4()
+                )
 
-            sf.write(
-                output_file,
-                hit["clip"],
-                TARGET_SAMPLE_RATE,
-                subtype="PCM_16",
-            )
+                output_file = (
+                    output_dir
+                    / f"{candidate_id}.wav"
+                )
 
-            rows.append({
-                "candidate":
-                    output_file.name,
+                sf.write(
+                    output_file,
+                    hit["clip"],
+                    TARGET_SAMPLE_RATE,
+                    subtype="PCM_16",
+                )
 
-                "source_file":
-                    str(audio_path),
+                rows.append({
+                    "candidate":
+                        output_file.name,
 
-                "trigger_time_sec":
-                    f'{hit["absolute_time"]:.3f}',
+                    "source_file":
+                        str(audio_path),
 
-                "rolling_average":
-                    f'{hit["average"]:.6f}',
+                    "trigger_time_sec":
+                        f'{hit["absolute_time"]:.3f}',
 
-                "peak_probability":
-                    f'{hit["peak"]:.6f}',
+                    "rolling_average":
+                        f'{hit["average"]:.6f}',
 
-                "threshold":
-                    args.threshold,
+                    "peak_probability":
+                        f'{hit["peak"]:.6f}',
 
-                "sliding_window":
-                    args.window,
-            })
+                    "threshold":
+                        args.threshold,
+
+                    "sliding_window":
+                        args.window,
+                })
 
             print(
                 "  FALSE CANDIDATE "
@@ -818,6 +834,16 @@ def main():
                 f"avg={hit['average']:.4f} "
                 f"peak={hit['peak']:.4f}"
             )
+
+    print()
+
+    if args.count:
+        print(
+            f"Found {match_count} "
+            "hard-negative matches."
+        )
+
+        return
 
     manifest = (
         output_dir
@@ -847,7 +873,6 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    print()
     print(
         f"Found {len(rows)} "
         "hard-negative candidates."
