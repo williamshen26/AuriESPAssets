@@ -187,10 +187,6 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-  - id: should_follow_up
-    type: bool
-    restore_value: no
-    initial_value: 'false'
   # Tracks starts that are eligible for a one-time retry when STT immediately returns no text.
   - id: va_started_at_ms
     type: uint32_t
@@ -1546,27 +1542,6 @@ script:
                 level: WARN
                 format: "Early STT retry cancelled because the assistant did not stop or the device is muted"
 
-  - id: start_follow_up_once
-    mode: restart
-    then:
-      - delay: 300ms
-      - if:
-          condition:
-            and:
-              - switch.is_off: master_mute_switch
-              - not:
-                  voice_assistant.is_running
-              - not:
-                  media_player.is_announcing:
-                    id: external_media_player
-          then:
-            - logger.log: "Starting follow-up voice assistant turn"
-            - lambda: |-
-                id(va_started_at_ms) = millis();
-                id(va_early_retry_armed) = true;
-                id(va_early_retry_used) = false;
-            - voice_assistant.start:
-
 i2s_audio:
   - id: i2s_output
     # i2s_output data pin is gpio10
@@ -1799,8 +1774,6 @@ micro_wake_word:
                     condition:
                       voice_assistant.is_running:
                     then:
-                      - logger.log: "Wake/stop word detected while VA is running; stopping and cancelling follow-up"
-                      - lambda: id(should_follow_up) = false;
                       - voice_assistant.stop:
                     # Stop any other media player announcement
                     else:
@@ -1849,17 +1822,17 @@ select:
       # These cutoffs apply only to the specific models included in the firmware: okay_nabu@20241226.3, hey_jarvis@v2, hey_mycroft@v2
       lambda: |-
         if (x == "Slightly sensitive") {
-          id(hey_auri).set_probability_cutoff(235);     // 0.92
+          id(hey_auri).set_probability_cutoff(245);
           id(okay_nabu).set_probability_cutoff(217);    // 0.85 -> 0.000 FAPH on DipCo (Manifest's default)
           id(hey_jarvis).set_probability_cutoff(247);   // 0.97 -> 0.563 FAPH on DipCo (Manifest's default)
           id(hey_mycroft).set_probability_cutoff(253);  // 0.99 -> 0.567 FAPH on DipCo
         } else if (x == "Moderately sensitive") {
-          id(hey_auri).set_probability_cutoff(213);     // 0.84
+          id(hey_auri).set_probability_cutoff(237);
           id(okay_nabu).set_probability_cutoff(176);    // 0.69 -> 0.376 FAPH on DipCo
           id(hey_jarvis).set_probability_cutoff(235);   // 0.92 -> 0.939 FAPH on DipCo
           id(hey_mycroft).set_probability_cutoff(242);  // 0.95 -> 1.502 FAPH on DipCo (Manifest's default)
         } else if (x == "Very sensitive") {
-          id(hey_auri).set_probability_cutoff(180);     // 0.71
+          id(hey_auri).set_probability_cutoff(230);
           id(okay_nabu).set_probability_cutoff(143);    // 0.56 -> 0.751 FAPH on DipCo
           id(hey_jarvis).set_probability_cutoff(212);   // 0.83 -> 1.502 FAPH on DipCo
           id(hey_mycroft).set_probability_cutoff(237);  // 0.93 -> 1.878 FAPH on DipCo
@@ -1889,7 +1862,7 @@ voice_assistant:
     - script.execute: control_leds
   on_error:
     # Retry exactly once only when STT returns no text within one second of
-    # an eligible start (wake-word start or start_follow_up_once).
+    # an wake-word start.
     - if:
         condition:
           lambda: |-
@@ -1954,14 +1927,6 @@ voice_assistant:
           # Start a script that would potentially enable the stop word if the response is longer than a second
           - script.execute: activate_stop_word_once
   on_tts_start:
-    - lambda: |-
-        id(should_follow_up) =
-          x.find("?") != std::string::npos ||
-          x.find("？") != std::string::npos;
-
-        ESP_LOGD("auri", "VA hook: on_tts_start text: %s", x.c_str());
-        ESP_LOGD("auri", "VA hook: on_tts_start contains question mark: %s",
-                 id(should_follow_up) ? "true" : "false");
     - if:
         condition:
           # The intent_progress trigger didn't start the TTS Reponse
@@ -1987,23 +1952,9 @@ voice_assistant:
           lambda: return id(voice_assistant_phase) == ${voice_assist_error_phase_id};
         then:
           - delay: 1s
-    # If the assistant asked a question, open one follow-up listening turn.
-    - if:
-        condition:
-          and:
-            - lambda: return id(should_follow_up);
-            - switch.is_off: master_mute_switch
-        then:
-          - logger.log: "Assistant asked a question; starting follow-up turn"
-          - lambda: id(should_follow_up) = false;
-          - lambda: id(voice_assistant_phase) = ${voice_assist_waiting_for_command_phase_id};
-          - script.execute: control_leds
-          - script.execute: start_follow_up_once
-        else:
-          - logger.log: "No follow-up needed; returning to idle"
-          - lambda: id(should_follow_up) = false;
-          - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
-          - script.execute: control_leds
+    # Reset the voice assistant phase id and reset the LED animations.
+    - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+    - script.execute: control_leds
   on_timer_finished:
     - switch.turn_on: timer_ringing
   on_timer_started:
