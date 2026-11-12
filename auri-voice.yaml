@@ -362,6 +362,9 @@ binary_sensor:
                                                   priority: true
                                                   sound_file: "center_button_press_sound"
                                               - delay: 300ms
+                                              # Tells Auri the user started this request (it resets the follow-up count).
+                                              - homeassistant.event:
+                                                  event: esphome.auri_wake_word
                                               - voice_assistant.start:
       # Double Click
       #  . Exposed as an event entity. To be used in automations inside Home Assistant
@@ -1542,6 +1545,30 @@ script:
                 level: WARN
                 format: "Early STT retry cancelled because the assistant did not stop or the device is muted"
 
+  # The wake word in one step: said while Auri is speaking (or listening), it stops the reply and
+  # listens for the new request, so "Hey Auri, write it on a sticky note" works mid-reply.
+  - id: restart_listening
+    mode: single
+    parameters:
+      wake_word: string
+    then:
+      - if:
+          condition:
+            media_player.is_announcing:
+              id: external_media_player
+          then:
+            - media_player.stop:
+                announcement: true
+                id: external_media_player
+      - voice_assistant.stop:
+      - wait_until:
+          condition:
+            not:
+              voice_assistant.is_running:
+          timeout: 2s
+      - voice_assistant.start:
+          wake_word: !lambda return wake_word;
+
 i2s_audio:
   - id: i2s_output
     # i2s_output data pin is gpio10
@@ -1774,7 +1801,26 @@ micro_wake_word:
                     condition:
                       voice_assistant.is_running:
                     then:
-                      - voice_assistant.stop:
+                      - if:
+                          condition:
+                            # The stop word only stops.
+                            lambda: return wake_word == "Stop";
+                          then:
+                            - voice_assistant.stop:
+                          else:
+                            # The wake word in one step: "Hey Auri, write it on a sticky note" while Auri
+                            # is speaking (or listening) stops it and takes the new request. Talking over
+                            # Auri without the wake word was tried and dropped (2026-11-11): this
+                            # satellite's speech detector hears Auri's own voice almost as surely as yours.
+                            - homeassistant.event:
+                                event: esphome.auri_wake_word
+                            - lambda: |-
+                                id(va_started_at_ms) = millis();
+                                id(va_early_retry_armed) = true;
+                                id(va_early_retry_used) = false;
+                            - script.execute:
+                                id: restart_listening
+                                wake_word: !lambda return wake_word;
                     # Stop any other media player announcement
                     else:
                       - if:
@@ -1796,6 +1842,9 @@ micro_wake_word:
                                       priority: true
                                       sound_file: "wake_word_triggered_sound"
                                   - delay: 350ms
+                            # Tells Auri the user started this request (it resets the follow-up count).
+                            - homeassistant.event:
+                                event: esphome.auri_wake_word
                             - lambda: |-
                                 id(va_started_at_ms) = millis();
                                 id(va_early_retry_armed) = true;
